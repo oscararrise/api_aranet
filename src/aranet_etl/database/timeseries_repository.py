@@ -92,7 +92,7 @@ class TimeseriesRepository:
                     copy.write_row(row)
             cursor.execute(
                 """
-                WITH upserted AS (
+                WITH inserted AS (
                     INSERT INTO aranet.measurement (
                         subject_type, subject_id, source_sensor_id, asset_id,
                         measurement_point_id, metric_id, unit_id, probe_no,
@@ -106,36 +106,51 @@ class TimeseriesRepository:
                     ON CONFLICT (
                         subject_type, subject_id, source_sensor_id,
                         metric_id, probe_no, measured_at
-                    ) DO UPDATE SET
-                        asset_id = EXCLUDED.asset_id,
-                        measurement_point_id = EXCLUDED.measurement_point_id,
-                        unit_id = EXCLUDED.unit_id,
-                        value = EXCLUDED.value,
-                        novelty = COALESCE(EXCLUDED.novelty, aranet.measurement.novelty),
-                        raw_payload = aranet.measurement.raw_payload || EXCLUDED.raw_payload,
-                        ingested_at = CURRENT_TIMESTAMP
-                    WHERE
-                        aranet.measurement.asset_id IS DISTINCT FROM EXCLUDED.asset_id
-                        OR aranet.measurement.measurement_point_id
-                            IS DISTINCT FROM EXCLUDED.measurement_point_id
-                        OR aranet.measurement.unit_id IS DISTINCT FROM EXCLUDED.unit_id
-                        OR aranet.measurement.value IS DISTINCT FROM EXCLUDED.value
-                        OR (
-                            EXCLUDED.novelty IS NOT NULL
-                            AND aranet.measurement.novelty IS DISTINCT FROM EXCLUDED.novelty
-                        )
-                        OR aranet.measurement.raw_payload IS DISTINCT FROM (
-                            aranet.measurement.raw_payload || EXCLUDED.raw_payload
-                        )
-                    RETURNING (xmax = 0) AS was_inserted
+                    ) DO NOTHING
+                    RETURNING 1
                 )
-                SELECT
-                    COUNT(*) FILTER (WHERE was_inserted),
-                    COUNT(*) FILTER (WHERE NOT was_inserted)
-                FROM upserted
+                SELECT COUNT(*) FROM inserted
                 """
             )
-            inserted, updated = cursor.fetchone()
+            inserted = cursor.fetchone()[0]
+            cursor.execute(
+                """
+                WITH updated AS (
+                    UPDATE aranet.measurement AS target SET
+                        asset_id = source.asset_id,
+                        measurement_point_id = source.measurement_point_id,
+                        unit_id = source.unit_id,
+                        value = source.value,
+                        novelty = COALESCE(source.novelty, target.novelty),
+                        raw_payload = target.raw_payload || source.raw_payload,
+                        ingested_at = CURRENT_TIMESTAMP
+                    FROM stage_aranet_measurement AS source
+                    WHERE target.subject_type = source.subject_type
+                      AND target.subject_id = source.subject_id
+                      AND target.source_sensor_id = source.source_sensor_id
+                      AND target.metric_id = source.metric_id
+                      AND target.probe_no = source.probe_no
+                      AND target.measured_at = source.measured_at
+                      AND (
+                          target.asset_id IS DISTINCT FROM source.asset_id
+                          OR target.measurement_point_id
+                              IS DISTINCT FROM source.measurement_point_id
+                          OR target.unit_id IS DISTINCT FROM source.unit_id
+                          OR target.value IS DISTINCT FROM source.value
+                          OR (
+                              source.novelty IS NOT NULL
+                              AND target.novelty IS DISTINCT FROM source.novelty
+                          )
+                          OR target.raw_payload IS DISTINCT FROM (
+                              target.raw_payload || source.raw_payload
+                          )
+                      )
+                    RETURNING 1
+                )
+                SELECT COUNT(*) FROM updated
+                """
+            )
+            updated = cursor.fetchone()[0]
         return UpsertResult(len(readings), int(inserted or 0), int(updated or 0))
 
     def upsert_telemetry(self, readings: list[dict[str, Any]]) -> UpsertResult:
@@ -183,7 +198,7 @@ class TimeseriesRepository:
                     copy.write_row(row)
             cursor.execute(
                 """
-                WITH upserted AS (
+                WITH inserted AS (
                     INSERT INTO aranet.telemetry (
                         sensor_id, metric_id, unit_id, probe_no,
                         measured_at, value, novelty, raw_payload
@@ -193,31 +208,44 @@ class TimeseriesRepository:
                         measured_at, value, novelty, raw_payload
                     FROM stage_aranet_telemetry
                     ON CONFLICT (sensor_id, metric_id, probe_no, measured_at)
-                    DO UPDATE SET
-                        unit_id = EXCLUDED.unit_id,
-                        value = EXCLUDED.value,
-                        novelty = COALESCE(EXCLUDED.novelty, aranet.telemetry.novelty),
-                        raw_payload = aranet.telemetry.raw_payload || EXCLUDED.raw_payload,
-                        ingested_at = CURRENT_TIMESTAMP
-                    WHERE
-                        aranet.telemetry.unit_id IS DISTINCT FROM EXCLUDED.unit_id
-                        OR aranet.telemetry.value IS DISTINCT FROM EXCLUDED.value
-                        OR (
-                            EXCLUDED.novelty IS NOT NULL
-                            AND aranet.telemetry.novelty IS DISTINCT FROM EXCLUDED.novelty
-                        )
-                        OR aranet.telemetry.raw_payload IS DISTINCT FROM (
-                            aranet.telemetry.raw_payload || EXCLUDED.raw_payload
-                        )
-                    RETURNING (xmax = 0) AS was_inserted
+                    DO NOTHING
+                    RETURNING 1
                 )
-                SELECT
-                    COUNT(*) FILTER (WHERE was_inserted),
-                    COUNT(*) FILTER (WHERE NOT was_inserted)
-                FROM upserted
+                SELECT COUNT(*) FROM inserted
                 """
             )
-            inserted, updated = cursor.fetchone()
+            inserted = cursor.fetchone()[0]
+            cursor.execute(
+                """
+                WITH updated AS (
+                    UPDATE aranet.telemetry AS target SET
+                        unit_id = source.unit_id,
+                        value = source.value,
+                        novelty = COALESCE(source.novelty, target.novelty),
+                        raw_payload = target.raw_payload || source.raw_payload,
+                        ingested_at = CURRENT_TIMESTAMP
+                    FROM stage_aranet_telemetry AS source
+                    WHERE target.sensor_id = source.sensor_id
+                      AND target.metric_id = source.metric_id
+                      AND target.probe_no = source.probe_no
+                      AND target.measured_at = source.measured_at
+                      AND (
+                          target.unit_id IS DISTINCT FROM source.unit_id
+                          OR target.value IS DISTINCT FROM source.value
+                          OR (
+                              source.novelty IS NOT NULL
+                              AND target.novelty IS DISTINCT FROM source.novelty
+                          )
+                          OR target.raw_payload IS DISTINCT FROM (
+                              target.raw_payload || source.raw_payload
+                          )
+                      )
+                    RETURNING 1
+                )
+                SELECT COUNT(*) FROM updated
+                """
+            )
+            updated = cursor.fetchone()[0]
         return UpsertResult(len(readings), int(inserted or 0), int(updated or 0))
 
     def upsert_alarms(self, alarms: list[dict[str, Any]], *, actual: bool) -> UpsertResult:
