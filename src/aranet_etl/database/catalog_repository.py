@@ -51,8 +51,8 @@ class CatalogRepository:
             cursor.execute(
                 sql.SQL(
                     """
-                    INSERT INTO aranet.{} (id, raw_payload, is_active, synced_at)
-                    VALUES (%s, '{}'::jsonb, false, CURRENT_TIMESTAMP)
+                    INSERT INTO aranet.{} (id, is_active, synced_at)
+                    VALUES (%s, false, CURRENT_TIMESTAMP)
                     ON CONFLICT (id) DO NOTHING
                     """
                 ).format(sql.Identifier(table_name)),
